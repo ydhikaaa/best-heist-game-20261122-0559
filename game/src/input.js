@@ -1,53 +1,79 @@
-// Keyboard and pointer input. Held keys give a steering direction; one-shot presses (start or
-// restart, pause) are queued as bit flags and taken once by the loop, so a press between two
-// frames is never lost and never counted twice.
+// Midnight Harbor — keyboard and mouse input, with per-frame edge detection.
+// One file, one job: nothing here knows about the game, only about keys.
+export const keysDown = new Set();
+const keysPressed = new Set();
+export const mouse = { x: 0, y: 0, clicked: false, down: false };
 
-export const ACTION_CONFIRM = 1;
-export const ACTION_PAUSE = 2;
+const GAME_KEYS = new Set([
+  'KeyW', 'KeyA', 'KeyS', 'KeyD',
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'ShiftLeft', 'ShiftRight', 'KeyC', 'KeyE', 'KeyQ', 'KeyF', 'KeyR',
+  'Enter', 'Space', 'Escape', 'KeyM',
+]);
 
-const LEFT = new Set(['ArrowLeft', 'KeyA']);
-const RIGHT = new Set(['ArrowRight', 'KeyD']);
-const CONFIRM = new Set(['Space', 'Enter']);
-const PAUSE = new Set(['KeyP', 'Escape']);
-
-export function createInput(target) {
-  let left = false;
-  let right = false;
-  let actions = 0;
-
-  window.addEventListener('keydown', (event) => {
-    if (LEFT.has(event.code)) left = true;
-    else if (RIGHT.has(event.code)) right = true;
-    else if (CONFIRM.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_CONFIRM;
-    } else if (PAUSE.has(event.code)) {
-      if (!event.repeat) actions |= ACTION_PAUSE;
-    } else return;
-    event.preventDefault();
+export function attachInput(canvas) {
+  window.addEventListener('keydown', (ev) => {
+    if (GAME_KEYS.has(ev.code)) ev.preventDefault();
+    if (!ev.repeat) keysPressed.add(ev.code);
+    keysDown.add(ev.code);
   });
-  window.addEventListener('keyup', (event) => {
-    if (LEFT.has(event.code)) left = false;
-    else if (RIGHT.has(event.code)) right = false;
+  window.addEventListener('keyup', (ev) => {
+    keysDown.delete(ev.code);
   });
-  // A key released while the tab is hidden never sends keyup: let go of everything on blur.
   window.addEventListener('blur', () => {
-    left = false;
-    right = false;
+    keysDown.clear();
   });
-  target.addEventListener('pointerdown', () => {
-    actions |= ACTION_CONFIRM;
+  canvas.addEventListener('mousemove', (ev) => {
+    const r = canvas.getBoundingClientRect();
+    mouse.x = ((ev.clientX - r.left) / r.width) * canvas.width;
+    mouse.y = ((ev.clientY - r.top) / r.height) * canvas.height;
   });
+  canvas.addEventListener('mousedown', (ev) => {
+    const r = canvas.getBoundingClientRect();
+    mouse.x = ((ev.clientX - r.left) / r.width) * canvas.width;
+    mouse.y = ((ev.clientY - r.top) / r.height) * canvas.height;
+    mouse.down = true;
+    mouse.clicked = true;
+  });
+  window.addEventListener('mouseup', () => {
+    mouse.down = false;
+  });
+}
 
-  return {
-    /** -1 for left, 1 for right, 0 for neither or both. */
-    direction() {
-      return (right ? 1 : 0) - (left ? 1 : 0);
-    },
-    /** The one-shot presses since the last call, as ACTION_* flags. */
-    takeActions() {
-      const taken = actions;
-      actions = 0;
-      return taken;
-    },
-  };
+export function isDown(code) {
+  return keysDown.has(code);
+}
+
+export function wasPressed(code) {
+  return keysPressed.has(code);
+}
+
+export function consumePressed(code) {
+  if (keysPressed.has(code)) {
+    keysPressed.delete(code);
+    return true;
+  }
+  return false;
+}
+
+// Movement vector from WASD / arrows, normalized.
+export function moveVector() {
+  let x = 0;
+  let y = 0;
+  if (isDown('KeyA') || isDown('ArrowLeft')) x -= 1;
+  if (isDown('KeyD') || isDown('ArrowRight')) x += 1;
+  if (isDown('KeyW') || isDown('ArrowUp')) y -= 1;
+  if (isDown('KeyS') || isDown('ArrowDown')) y += 1;
+  if (x !== 0 && y !== 0) {
+    const inv = 1 / Math.hypot(x, y);
+    x *= inv;
+    y *= inv;
+  }
+  return { x, y };
+}
+
+// Call at the end of every frame so edges fire exactly once.
+export function endFrameInput() {
+  keysPressed.clear();
+  mouse.clicked = false;
 }

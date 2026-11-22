@@ -1,124 +1,113 @@
-// The game's rules and state, with no drawing and no browser in it: the player's paddle, the
-// pool of falling blocks and coins, spawning, collisions, score, lives and level. step() advances
-// one fixed step and returns what happened as bit flags, so the caller can react without the
-// world knowing about screens or sound. Nothing here allocates after createWorld returns.
-import { BLOCK, COIN, FIELD, LEVEL, LIVES, PLAYER, POOL_SIZE } from './config.js';
+// Midnight Harbor — the level grid: solidity, sight lines and reachability.
+// One file, one job: every question about "can I stand / see here" goes here.
+import { TILE, COLS, ROWS } from './config.js';
 
-export const KIND_BLOCK = 0;
-export const KIND_COIN = 1;
-
-export const EVENT_HIT = 1;
-export const EVENT_COIN = 2;
-export const EVENT_OVER = 4;
-
-function overlaps(a, b) {
-  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+export function tileAt(grid, tx, ty) {
+  if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return '#';
+  return grid[ty][tx];
 }
 
-export function createWorld(random) {
-  const player = { x: 0, y: FIELD.groundY - PLAYER.height, width: PLAYER.width, height: PLAYER.height, invulnerable: 0 };
-  const items = [];
-  for (let index = 0; index < POOL_SIZE; index += 1) {
-    items.push({ active: false, kind: KIND_BLOCK, x: 0, y: 0, width: 0, height: 0, speed: 0 });
-  }
-  const state = { player, items, score: 0, lives: LIVES, level: 1, elapsed: 0, blockTimer: 0, coinTimer: 0 };
+export function isSolidTile(grid, tx, ty) {
+  const t = tileAt(grid, tx, ty);
+  return t === '#' || t === '=' || t === '~';
+}
 
-  function reset() {
-    player.x = (FIELD.width - player.width) / 2;
-    player.invulnerable = 0;
-    for (const item of items) item.active = false;
-    state.score = 0;
-    state.lives = LIVES;
-    state.level = 1;
-    state.elapsed = 0;
-    state.blockTimer = BLOCK.interval;
-    state.coinTimer = COIN.interval;
-  }
+export function blocksSightTile(grid, tx, ty) {
+  const t = tileAt(grid, tx, ty);
+  return t === '#' || t === '=';
+}
 
-  function freeItem() {
-    for (let index = 0; index < items.length; index += 1) if (!items[index].active) return items[index];
-    return null;
-  }
+export function isSolidPx(grid, x, y) {
+  return isSolidTile(grid, Math.floor(x / TILE), Math.floor(y / TILE));
+}
 
-  function spawnBlock() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_BLOCK;
-    item.width = BLOCK.minWidth + random() * (BLOCK.maxWidth - BLOCK.minWidth);
-    item.height = BLOCK.height;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = BLOCK.speed + BLOCK.speedPerLevel * (state.level - 1) + random() * BLOCK.speedJitter;
-  }
+// Circle vs solid tiles: slide along walls instead of sticking.
+export function moveCircle(grid, ent, dx, dy, radius) {
+  const nx = ent.x + dx;
+  if (!circleHitsSolid(grid, nx, ent.y, radius)) ent.x = nx;
+  const ny = ent.y + dy;
+  if (!circleHitsSolid(grid, ent.x, ny, radius)) ent.y = ny;
+}
 
-  function spawnCoin() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_COIN;
-    item.width = COIN.size;
-    item.height = COIN.size;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = COIN.speed + COIN.speedPerLevel * (state.level - 1);
-  }
-
-  function blockInterval() {
-    return Math.max(BLOCK.minInterval, BLOCK.interval * BLOCK.intervalScale ** (state.level - 1));
-  }
-
-  /**
-   * One fixed step. `direction` is -1, 0 or 1 (left, still, right). With `harmless` set (the title
-   * screen's backdrop) things fall but nothing touches the player and nothing scores.
-   */
-  function step(dt, direction, harmless) {
-    let events = 0;
-    state.elapsed += dt;
-    state.level = Math.min(LEVEL.max, 1 + Math.floor(state.elapsed / LEVEL.seconds));
-
-    player.x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * dt));
-    if (player.invulnerable > 0) player.invulnerable = Math.max(0, player.invulnerable - dt);
-
-    state.blockTimer -= dt;
-    if (state.blockTimer <= 0) {
-      spawnBlock();
-      state.blockTimer += blockInterval();
+export function circleHitsSolid(grid, x, y, radius) {
+  const x0 = Math.floor((x - radius) / TILE);
+  const x1 = Math.floor((x + radius) / TILE);
+  const y0 = Math.floor((y - radius) / TILE);
+  const y1 = Math.floor((y + radius) / TILE);
+  for (let ty = y0; ty <= y1; ty++) {
+    for (let tx = x0; tx <= x1; tx++) {
+      if (!isSolidTile(grid, tx, ty)) continue;
+      const cx = Math.max(tx * TILE, Math.min(x, tx * TILE + TILE));
+      const cy = Math.max(ty * TILE, Math.min(y, ty * TILE + TILE));
+      const ddx = x - cx;
+      const ddy = y - cy;
+      if (ddx * ddx + ddy * ddy < radius * radius) return true;
     }
-    state.coinTimer -= dt;
-    if (state.coinTimer <= 0) {
-      spawnCoin();
-      state.coinTimer += COIN.interval + random() * COIN.intervalJitter;
-    }
+  }
+  return false;
+}
 
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      item.y += item.speed * dt;
-      if (item.y > FIELD.groundY) {
-        item.active = false;
-        if (item.kind === KIND_BLOCK && !harmless) state.score += BLOCK.dodgePoints;
-        continue;
-      }
-      if (harmless || !overlaps(item, player)) continue;
-      if (item.kind === KIND_COIN) {
-        item.active = false;
-        state.score += COIN.points;
-        events |= EVENT_COIN;
-      } else if (player.invulnerable === 0) {
-        item.active = false;
-        state.lives -= 1;
-        player.invulnerable = PLAYER.invulnerable;
-        events |= EVENT_HIT;
-        if (state.lives === 0) {
-          events |= EVENT_OVER;
-          break;
-        }
+// Line of sight between two points, sampled every 6 px; smoke clouds block
+// sight too, so a smoke bomb is real cover.
+export function hasLineOfSight(grid, x0, y0, x1, y1, smokes) {
+  const dist = Math.hypot(x1 - x0, y1 - y0);
+  const steps = Math.max(1, Math.ceil(dist / 6));
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    const x = x0 + (x1 - x0) * t;
+    const y = y0 + (y1 - y0) * t;
+    if (blocksSightTile(grid, Math.floor(x / TILE), Math.floor(y / TILE))) return false;
+    if (smokes) {
+      for (const s of smokes) {
+        const dx = x - s.x;
+        const dy = y - s.y;
+        if (dx * dx + dy * dy < s.r * s.r) return false;
       }
     }
-    return events;
   }
+  return true;
+}
 
-  reset();
-  return { state, reset, step };
+// Can a viewer at (x0,y0) with facing angle and cone see the target?
+export function inVisionCone(x0, y0, facing, range, halfAngle, tx, ty) {
+  const dx = tx - x0;
+  const dy = ty - y0;
+  const dist = Math.hypot(dx, dy);
+  if (dist > range) return { seen: false, dist };
+  let ang = Math.atan2(dy, dx) - facing;
+  while (ang > Math.PI) ang -= Math.PI * 2;
+  while (ang < -Math.PI) ang += Math.PI * 2;
+  return { seen: Math.abs(ang) <= halfAngle, dist };
+}
+
+export function tileCenter(tx, ty) {
+  return { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 };
+}
+
+export function angleTo(x0, y0, x1, y1) {
+  return Math.atan2(y1 - y0, x1 - x0);
+}
+
+export function angleDiff(a, b) {
+  let d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+// Flood fill from the player start over walkable tiles: used by the
+// self-test to prove every level's loot and exit can actually be reached.
+export function reachableTiles(grid, startTx, startTy) {
+  const seen = new Set();
+  const key = (x, y) => y * COLS + x;
+  const stack = [[startTx, startTy]];
+  while (stack.length) {
+    const [x, y] = stack.pop();
+    if (x < 0 || y < 0 || x >= COLS || y >= ROWS) continue;
+    if (seen.has(key(x, y))) continue;
+    if (isSolidTile(grid, x, y)) continue;
+    seen.add(key(x, y));
+    stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+  }
+  return seen;
 }
