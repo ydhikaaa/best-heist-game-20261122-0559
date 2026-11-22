@@ -14,7 +14,13 @@ export function isSolidTile(grid, tx, ty) {
 
 export function blocksSightTile(grid, tx, ty) {
   const t = tileAt(grid, tx, ty);
-  return t === '#' || t === '=';
+  // A vent duct is low and lidded: it blocks sight like a wall, but the
+  // thief can crawl through it. That is what makes it a second route.
+  return t === '#' || t === '=' || t === 'V';
+}
+
+export function isVentTile(grid, tx, ty) {
+  return tileAt(grid, tx, ty) === 'V';
 }
 
 export function isSolidPx(grid, x, y) {

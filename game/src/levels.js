@@ -4,7 +4,8 @@
 //
 // Map legend: '#' wall / stacked container (blocks movement and sight),
 // '=' low crate (blocks movement and sight), '.' open floor, ':' marked
-// walkway floor, '~' water (blocks movement, not sight).
+// walkway floor, '~' water (blocks movement, not sight), 'V' vent duct
+// (walkable, blocks sight — the crawlspace second route, see vents.js).
 import { COLS, ROWS } from './config.js';
 
 function newGrid() {
@@ -27,6 +28,11 @@ function rect(g, x, y, w, h, ch) {
       if (xx > 0 && xx < COLS - 1 && yy > 0 && yy < ROWS - 1) g[yy][xx] = ch;
     }
   }
+}
+
+// Cut a vent duct tile through a wall / container / shelf: the second route.
+function vent(g, x, y) {
+  if (x > 0 && x < COLS - 1 && y > 0 && y < ROWS - 1) g[y][x] = 'V';
 }
 
 function finish(def) {
@@ -68,6 +74,8 @@ export const LEVELS = [
     rect(g, 26, 10, 2, 1, '=');
     rect(g, 16, 18, 2, 1, '=');
     rect(g, 33, 15, 2, 1, '=');
+    vent(g, 14, 7); vent(g, 14, 8); // duct through the mid container row
+    vent(g, 25, 12); vent(g, 25, 13); // duct through the lower container row
     rect(g, 2, 10, 36, 1, ':'); // painted lane
     L.player = { tx: 3, ty: 19 };
     L.exit = { tx: 37, ty: 8 };
@@ -115,6 +123,9 @@ export const LEVELS = [
     rect(g, 20, 16, 1, 1, '=');
     rect(g, 33, 19, 2, 1, '=');
     rect(g, 6, 19, 2, 1, '=');
+    // Ducts through every shelf row: crawl the shelves instead of the aisles.
+    vent(g, 11, 5); vent(g, 11, 9); vent(g, 11, 13); vent(g, 11, 17);
+    vent(g, 30, 5); vent(g, 30, 9); vent(g, 30, 13); vent(g, 30, 17);
     L.player = { tx: 2, ty: 20 };
     L.exit = { tx: 37, ty: 18 };
     L.jade = { tx: 32, ty: 3 };
@@ -160,6 +171,12 @@ export const LEVELS = [
     rect(g, 29, 4, 4, 1, '=');
     rect(g, 33, 10, 3, 1, '=');
     rect(g, 29, 18, 4, 1, '=');
+    // A third crossing through each dividing wall, mid-wall, by vent.
+    vent(g, 13, 11);
+    vent(g, 26, 11);
+    // The self-test walls off all four doors and proves the jade is still
+    // reachable — through these two vents and nothing else.
+    L.secondRouteChoke = [[13, 7], [13, 15], [26, 5], [26, 17]];
     L.player = { tx: 2, ty: 20 };
     L.exit = { tx: 2, ty: 8 };
     L.jade = { tx: 32, ty: 3 };
@@ -207,6 +224,9 @@ export const LEVELS = [
     rect(g, 6, 10, 1, 1, '=');
     rect(g, 33, 18, 1, 1, '=');
     rect(g, 30, 5, 2, 1, '=');
+    // A duct column down the middle deck, through two container blocks.
+    vent(g, 20, 8); vent(g, 20, 9);
+    vent(g, 20, 13); vent(g, 20, 14);
     L.player = { tx: 4, ty: 20 };
     L.exit = { tx: 36, ty: 18 };
     L.jade = { tx: 21, ty: 2 };
@@ -249,6 +269,14 @@ export const LEVELS = [
     rect(g, 6, 11, 1, 1, '=');
     rect(g, 33, 18, 2, 1, '=');
     rect(g, 20, 19, 2, 1, '=');
+    // Ducts through the central hold blocks, north and south of the jade,
+    // plus a second way into the engine room.
+    vent(g, 20, 8); vent(g, 20, 9);
+    vent(g, 20, 13); vent(g, 20, 14);
+    vent(g, 33, 4);
+    // The self-test walls off the middle corridor's side gaps and proves the
+    // jade is still reachable — through the central ducts and nothing else.
+    L.secondRouteChoke = [[13, 10], [13, 11], [13, 12], [26, 10], [26, 11], [26, 12]];
     L.player = { tx: 3, ty: 20 };
     L.exit = { tx: 36, ty: 8 };
     L.jade = { tx: 20, ty: 10 };

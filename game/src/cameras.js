@@ -2,6 +2,7 @@
 // One file, one job: sweep, spot, and shut down.
 import { CAMERA, COLORS } from './config.js';
 import { hasLineOfSight, inVisionCone, tileCenter, angleDiff } from './world.js';
+import { playerInVent } from './vents.js';
 
 export function createCamera(def, index) {
   const p = tileCenter(def.tx, def.ty);
@@ -24,7 +25,8 @@ export function updateCamera(cam, dt, game) {
   cam.angle = cam.base + Math.sin(game.time * CAMERA.sweepSpeed + cam.phase) * cam.sweep;
   const player = game.player;
   let seen = false;
-  if (!player.hidden) {
+  // A thief crawling inside a vent duct cannot be seen, period.
+  if (!player.hidden && !playerInVent(game)) {
     const view = inVisionCone(cam.x, cam.y, cam.angle, CAMERA.range, CAMERA.halfAngle, player.x, player.y);
     if (view.seen && hasLineOfSight(game.grid, cam.x, cam.y, player.x, player.y, game.smokes)) {
       seen = true;

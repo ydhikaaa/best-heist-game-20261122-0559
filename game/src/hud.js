@@ -1,8 +1,9 @@
 // Midnight Harbor — HUD, minimap, legend and menu screens.
 // One file, one job: everything drawn on top of the world.
-import { VIEW_W, VIEW_H, HUD_H, TILE, COLS, ROWS, COLORS, LOOT_NAMES } from './config.js';
+import { VIEW_W, VIEW_H, HUD_H, TILE, COLS, ROWS, COLORS, LOOT_NAMES, TOOL_COST_LABELS } from './config.js';
 import { guardStateLabel, guardStateColor } from './guards.js';
-import { hasJade, lootTakenValue, exitOpen } from './loot.js';
+import { hasJade, lootTakenValue, netLootValue, exitOpen } from './loot.js';
+import { getawayRank } from './getaway.js';
 
 export const uiButtons = []; // rebuilt every frame: {id,x,y,w,h}
 
@@ -73,14 +74,14 @@ export function drawTopBar(ctx, game) {
   ctx.stroke();
   text(ctx, `${Math.floor(alarm)}%`, ax + aw - 8, 40, 13, '#ffffff', 800, 'right');
   if (alarm >= 70) text(ctx, '!! SPOTTED !!', ax + aw / 2, 20, 12, COLORS.alarmHigh, 800, 'center');
-  // Loot + tools, far right.
-  const loot = lootTakenValue(game);
+  // Loot + tools, far right. LOOT is the take: loot grabbed minus tool costs.
+  const loot = netLootValue(game);
   text(ctx, `LOOT $${loot.toLocaleString()}`, 1266, 24, 16, COLORS.gold, 800, 'right');
-  text(ctx, `COIN [Q] ×${game.tools.coin}   SMOKE [F] ×${game.tools.smoke}   EMP [R] ×${game.tools.emp}`, 1266, 44, 12, COLORS.hudDim, 600, 'right');
+  text(ctx, `COIN [Q] ×${game.tools.coin} · ${TOOL_COST_LABELS.coin}    SMOKE [F] ×${game.tools.smoke} · ${TOOL_COST_LABELS.smoke}    EMP [R] ×${game.tools.emp} · ${TOOL_COST_LABELS.emp}`, 1266, 44, 12, COLORS.hudDim, 600, 'right');
 }
 
 export function drawObjectives(ctx, game) {
-  panel(ctx, 8, 64, 198, 168);
+  panel(ctx, 8, 64, 198, 184);
   text(ctx, 'OBJECTIVES', 20, 86, 13, '#58e0ff', 800);
   const jade = hasJade(game);
   const side = game.loot.filter((l) => l.kind !== 'jade' && l.taken).length;
@@ -108,10 +109,10 @@ export function drawObjectives(ctx, game) {
     }
     text(ctx, r.label, 40, y, 12, r.done ? '#bfe9d2' : COLORS.hudText, r.done ? 600 : 500);
   });
-  text(ctx, 'CONTROLS', 20, 188, 11, COLORS.hudDim, 700);
-  text(ctx, 'WASD move · Shift sprint', 20, 206, 11, COLORS.hudDim, 500);
-  text(ctx, 'C sneak · E grab · Q coin', 20, 220, 11, COLORS.hudDim, 500);
-  text(ctx, 'F smoke · R EMP · Esc pause', 20, 234 - 6, 11, COLORS.hudDim, 500);
+  text(ctx, 'CONTROLS', 20, 196, 11, COLORS.hudDim, 700);
+  text(ctx, 'WASD move · Shift sprint', 20, 214, 11, COLORS.hudDim, 500);
+  text(ctx, 'C sneak · E grab · Q coin', 20, 230, 11, COLORS.hudDim, 500);
+  text(ctx, 'F smoke · R EMP · Esc pause', 20, 246, 11, COLORS.hudDim, 500);
 }
 
 export function drawGuardPanel(ctx, game) {
@@ -140,16 +141,17 @@ export function drawGuardPanel(ctx, game) {
 }
 
 export function drawLegend(ctx, game) {
-  panel(ctx, 8, VIEW_H - 92, 240, 84);
-  text(ctx, 'LEGEND', 20, VIEW_H - 70, 11, '#58e0ff', 800);
+  panel(ctx, 8, VIEW_H - 108, 240, 100);
+  text(ctx, 'LEGEND', 20, VIEW_H - 86, 11, '#58e0ff', 800);
   const items = [
     ['#39d5bd', 'You — the thief'],
     ['#ffd75e', 'Loot · Jade Manifest'],
     ['rgba(255,196,66,0.9)', 'Vision cone — stay out'],
     ['#58e0ff', 'Exit / getaway boat'],
+    ['#39d5bd', 'Vent — crawl unseen'],
   ];
   items.forEach(([c, label], i) => {
-    const y = VIEW_H - 54 + i * 15;
+    const y = VIEW_H - 70 + i * 15;
     ctx.fillStyle = c;
     ctx.beginPath();
     ctx.arc(24, y - 4, 5, 0, Math.PI * 2);
@@ -175,6 +177,7 @@ export function drawMinimap(ctx, game) {
       if (t === '#') ctx.fillStyle = '#5a6b80';
       else if (t === '=') ctx.fillStyle = '#6b5a35';
       else if (t === '~') ctx.fillStyle = '#1d4d6b';
+      else if (t === 'V') ctx.fillStyle = '#1f7a6e';
       else continue;
       ctx.fillRect(ox + tx * sx, oy + ty * sy, sx + 0.5, sy + 0.5);
     }
@@ -194,11 +197,21 @@ export function drawMinimap(ctx, game) {
 }
 
 export function drawMessage(ctx, game) {
-  if (game.messageTime <= 0) return;
+  // During the getaway the banner owns the message line — never double it.
+  if (game.messageTime <= 0 || game.getaway) return;
   const alpha = Math.min(1, game.messageTime);
   ctx.save();
   ctx.globalAlpha = alpha;
   text(ctx, game.message, VIEW_W / 2, HUD_H + 26, 16, '#ffe9a8', 700, 'center');
+  ctx.restore();
+}
+
+export function drawGetawayBanner(ctx, game) {
+  if (!game.getaway || game.state !== 'playing') return;
+  const pulse = 0.55 + 0.45 * Math.sin(game.time * 6);
+  ctx.save();
+  ctx.globalAlpha = pulse;
+  text(ctx, '⚠  GETAWAY — RUN FOR THE BOAT!  ⚠', VIEW_W / 2, HUD_H + 46, 20, '#ff5a4e', 900, 'center');
   ctx.restore();
 }
 
@@ -210,6 +223,7 @@ export function drawHud(ctx, game) {
   drawLegend(ctx, game);
   drawMinimap(ctx, game);
   drawMessage(ctx, game);
+  drawGetawayBanner(ctx, game);
 }
 
 function dimScreen(ctx) {
@@ -259,7 +273,7 @@ export function drawCaught(ctx, game) {
   dimScreen(ctx);
   centerText(ctx, 'CAUGHT!', 240, 72, '#ff5a4e', 900);
   centerText(ctx, game.caughtReason || 'A guard grabbed you — or the alarm hit 100%.', 300, 18, COLORS.hudText, 500);
-  centerText(ctx, `Level ${game.levelIndex + 1} — ${game.level.name} · Loot kept: $${lootTakenValue(game).toLocaleString()}`, 340, 15, COLORS.hudDim, 500);
+  centerText(ctx, `Level ${game.levelIndex + 1} — ${game.level.name} · Take kept: $${netLootValue(game).toLocaleString()}`, 340, 15, COLORS.hudDim, 500);
   centerText(ctx, 'The cones told you. Next time, read them first.', 380, 15, COLORS.hudDim, 500);
   drawButton(ctx, 'retry', VIEW_W / 2 - 270, 460, 250, 52, 'TRY AGAIN  [R]', true);
   drawButton(ctx, 'title', VIEW_W / 2 + 20, 460, 250, 52, 'TITLE SCREEN', false);
@@ -270,7 +284,7 @@ export function drawLevelClear(ctx, game) {
   centerText(ctx, 'CLEAN GETAWAY', 210, 56, '#58d68d', 900);
   centerText(ctx, `Level ${game.levelIndex + 1} — ${game.level.name} cleared`, 268, 20, COLORS.hudText, 600);
   const s = game.levelStats;
-  centerText(ctx, `Time ${s.time}  ·  Loot $${s.loot.toLocaleString()}  ·  Peak alarm ${s.peakAlarm}%  ·  Side loot ${s.side}/${s.sideTotal}`, 320, 16, COLORS.hudDim, 500);
+  centerText(ctx, `Time ${s.time}  ·  Take $${s.loot.toLocaleString()} (tools −$${s.spent.toLocaleString()})  ·  Peak alarm ${s.peakAlarm}%  ·  Side loot ${s.side}/${s.sideTotal}`, 320, 16, COLORS.hudDim, 500);
   if (game.levelIndex + 1 < 5) {
     drawButton(ctx, 'next', VIEW_W / 2 - 130, 420, 260, 52, 'NEXT LEVEL  [Enter]', true);
   } else {
@@ -280,11 +294,30 @@ export function drawLevelClear(ctx, game) {
 
 export function drawVictory(ctx, game) {
   dimScreen(ctx);
-  centerText(ctx, 'THE JADE MANIFEST IS YOURS', 210, 44, '#ffd75e', 900);
-  centerText(ctx, 'Five rooms, five patrols — and the boat is already moving.', 268, 18, COLORS.hudText, 500);
-  centerText(ctx, `Total loot $${game.totalLoot.toLocaleString()}  ·  Total time ${game.totalTime}  ·  Best alarm peak ${game.bestPeak}%`, 320, 16, COLORS.hudDim, 600);
-  centerText(ctx, 'Somewhere behind you, Pier 7 is waking up to an empty crate.', 380, 15, COLORS.hudDim, 500);
-  drawButton(ctx, 'again', VIEW_W / 2 - 130, 470, 260, 52, 'STEAL IT AGAIN  [Enter]', true);
+  centerText(ctx, 'THE JADE MANIFEST IS YOURS', 150, 44, '#ffd75e', 900);
+  centerText(ctx, 'Five rooms, five patrols — and the boat is already moving.', 198, 18, COLORS.hudText, 500);
+  // The getaway payoff: the whole heist scored, with a rank title.
+  const sideTaken = game.totalSideTaken || 0;
+  const sideTotal = game.totalSideTotal || 0;
+  const rank = getawayRank(game.bestPeak, sideTaken, sideTotal);
+  centerText(ctx, rank, 258, 26, '#58e0ff', 800);
+  const net = game.totalLoot - (game.totalSpent || 0);
+  const fmt = (sec) => {
+    const t = Math.floor(sec);
+    return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+  };
+  const rows = [
+    `Total loot  $${game.totalLoot.toLocaleString()}`,
+    `Tools spent  −$${(game.totalSpent || 0).toLocaleString()}`,
+    `THE TAKE  $${net.toLocaleString()}`,
+    `Side loot  ${sideTaken}/${sideTotal}   ·   Total time  ${fmt(game.totalTime)}   ·   Peak alarm  ${game.bestPeak}%`,
+  ];
+  rows.forEach((r, i) => {
+    const y = 320 + i * 30;
+    centerText(ctx, r, y, i === 2 ? 22 : 17, i === 2 ? '#ffd75e' : COLORS.hudText, i === 2 ? 800 : 600);
+  });
+  centerText(ctx, 'Somewhere behind you, Pier 7 is waking up to an empty crate.', 480, 15, COLORS.hudDim, 500);
+  drawButton(ctx, 'again', VIEW_W / 2 - 130, 540, 260, 52, 'STEAL IT AGAIN  [Enter]', true);
 }
 
 export function drawPaused(ctx) {

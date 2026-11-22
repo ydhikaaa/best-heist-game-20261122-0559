@@ -151,6 +151,12 @@ export class HarborAudio {
     this.tone(220, 0.16, 'square', 0.14, 330);
   }
 
+  // The getaway surge: three rising siren blasts as the harbor wakes up.
+  alarmSurge() {
+    [660, 880, 1108].forEach((f, i) => setTimeout(() => this.tone(f, 0.3, 'sawtooth', 0.16, f * 1.4), i * 160));
+    this.setAlarmLevel(60);
+  }
+
   caught() {
     [440, 415, 392, 370].forEach((f, i) => setTimeout(() => this.tone(f, 0.22, 'sawtooth', 0.16), i * 130));
   }

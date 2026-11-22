@@ -5,9 +5,11 @@ import { LEVELS } from './levels.js';
 import { HarborAudio } from './audio.js';
 import { attachInput, isDown, wasPressed, consumePressed, moveVector, endFrameInput, mouse } from './input.js';
 import { isSolidTile, isSolidPx, moveCircle, tileCenter, reachableTiles } from './world.js';
-import { createGuard, updateGuards } from './guards.js';
+import { createGuard, updateGuards, guardSeesPlayer } from './guards.js';
 import { createCamera, updateCameras, anyCameraHot } from './cameras.js';
-import { createLoot, tryPickup, throwCoin, dropSmoke, fireEmp, updateCoins, updateSmokes, hasJade, lootTakenValue, exitOpen, playerAtExit } from './loot.js';
+import { createLoot, tryPickup, throwCoin, dropSmoke, fireEmp, updateCoins, updateSmokes, hasJade, lootTakenValue, netLootValue, exitOpen, playerAtExit } from './loot.js';
+import { updateGetaway } from './getaway.js';
+import { ventTiles } from './vents.js';
 import { drawWorld } from './render.js';
 import { drawHud, drawTitle, drawBrief, drawCaught, drawLevelClear, drawVictory, drawPaused, uiButtons } from './hud.js';
 
@@ -44,8 +46,13 @@ const game = {
   caughtReason: '',
   levelStats: null,
   totalLoot: 0,
+  totalSpent: 0,
   totalTime: 0,
+  totalSideTaken: 0,
+  totalSideTotal: 0,
   bestPeak: 0,
+  toolSpend: 0, // loot spent on smoke / EMP this level
+  getaway: false, // the final-level chase after the last manifest
   audio: new HarborAudio(),
   muted: false,
   pausedFrom: null,
@@ -90,6 +97,8 @@ function loadLevel(index) {
   game.particles = [];
   game.alarm = 0;
   game.peakAlarm = 0;
+  game.toolSpend = 0;
+  game.getaway = false;
   game.levelTime = 0;
   game.message = '';
   game.messageTime = 0;
@@ -107,12 +116,16 @@ function completeLevel() {
   const sideTotal = game.loot.filter((l) => l.kind !== 'jade').length;
   game.levelStats = {
     time: fmtTime(game.levelTime),
-    loot: lootTakenValue(game),
+    loot: netLootValue(game), // the take: loot minus tool costs
+    spent: game.toolSpend,
     peakAlarm: Math.floor(game.peakAlarm),
     side,
     sideTotal,
   };
   game.totalLoot += lootTakenValue(game);
+  game.totalSpent += game.toolSpend;
+  game.totalSideTaken += side;
+  game.totalSideTotal += sideTotal;
   game.totalTime += game.levelTime;
   game.bestPeak = Math.max(game.bestPeak, Math.floor(game.peakAlarm));
   try {
@@ -169,14 +182,19 @@ function updatePlaying(dt) {
   updateGuards(game, dt);
   updateCameras(game, dt);
 
-  // Alarm: rises while seen, falls while hidden.
-  const anyAlert = game.guards.some((g) => g.state === 'alert');
-  const camHot = anyCameraHot(game);
-  if (anyAlert) game.alarm += ALARM.riseAlert * dt;
-  if (camHot) game.alarm += ALARM.riseCamera * dt;
-  if (!anyAlert && !camHot) game.alarm -= ALARM.decay * dt;
-  game.alarm = Math.max(0, Math.min(100, game.alarm));
-  game.peakAlarm = Math.max(game.peakAlarm, game.alarm);
+  // Alarm: rises while seen, falls while hidden. During the getaway the
+  // harbor is fully awake: the alarm climbs on its own and never falls.
+  if (game.getaway) {
+    updateGetaway(game, dt);
+  } else {
+    const anyAlert = game.guards.some((g) => g.state === 'alert');
+    const camHot = anyCameraHot(game);
+    if (anyAlert) game.alarm += ALARM.riseAlert * dt;
+    if (camHot) game.alarm += ALARM.riseCamera * dt;
+    if (!anyAlert && !camHot) game.alarm -= ALARM.decay * dt;
+    game.alarm = Math.max(0, Math.min(100, game.alarm));
+    game.peakAlarm = Math.max(game.peakAlarm, game.alarm);
+  }
   game.audio.setAlarmLevel(game.alarm);
   if (game.alarm >= ALARM.caughtAt) {
     game.onCaught(null);
@@ -230,7 +248,10 @@ function updateMenus() {
   } else if (game.state === 'victory') {
     if (consumePressed('Enter') || clickedButton('again')) {
       game.totalLoot = 0;
+      game.totalSpent = 0;
       game.totalTime = 0;
+      game.totalSideTaken = 0;
+      game.totalSideTotal = 0;
       game.bestPeak = 0;
       loadLevel(0);
       game.state = 'brief';
@@ -278,10 +299,19 @@ function loop(now) {
 // Each shot places the thief mid-heist with cones, a camera, the loot and
 // the alarm meter all in one frame, then freezes the frame.
 const SHOTS = {
+  // Cover: the thief mid-crossing at the edge of a guard's cone, the camera
+  // sweeping down onto the Jade Manifest, a smoke cloud and a thrown coin in
+  // play, the alarm meter amber — thief, cone, camera, loot and alarm in one
+  // frame, with the vent duct visible as the second route.
   cover: {
-    level: 0, player: { tx: 16, ty: 10, facing: 0.6 }, alarm: 34,
-    guards: [{ id: 0, tx: 24, ty: 10, facing: Math.PI, suspicion: 55, state: 'suspicious' }],
+    level: 0, player: { tx: 17, ty: 10, facing: 0.5 }, alarm: 47,
+    guards: [
+      { id: 0, tx: 23, ty: 10, facing: Math.PI, suspicion: 55, state: 'suspicious' },
+      { id: 1, tx: 28, ty: 14, facing: -2.4, suspicion: 40, state: 'suspicious' },
+    ],
     lootTaken: ['cash'],
+    smoke: { tx: 12, ty: 13 },
+    coin: { tx: 20, ty: 12 },
   },
   warehouse: {
     level: 1, player: { tx: 19, ty: 11, facing: -0.4 }, alarm: 58,
@@ -290,11 +320,13 @@ const SHOTS = {
   },
   freighter: {
     level: 3, player: { tx: 21, ty: 12, facing: -Math.PI / 2 }, alarm: 22,
-    guards: [{ id: 1, tx: 21, ty: 8, facing: Math.PI / 2, suspicion: 40, state: 'suspicious' }],
+    guards: [{ id: 1, tx: 21, ty: 11, facing: Math.PI / 2, suspicion: 40, state: 'suspicious' }],
     lootTaken: [],
   },
+  // Getaway: the final manifest is taken, the alarm is surging, every guard
+  // is converging, and the thief is running the dashed escape line to the boat.
   getaway: {
-    level: 4, player: { tx: 30, ty: 5, facing: 0.9 }, alarm: 71,
+    level: 4, player: { tx: 32, ty: 7, facing: 0.9 }, alarm: 82, getaway: true,
     guards: [{ id: 3, tx: 33, ty: 13, facing: -Math.PI / 2, suspicion: 88, state: 'alert' }],
     lootTaken: ['jade', 'gold', 'art'],
   },
@@ -325,7 +357,24 @@ function applyShot(name) {
     const item = game.loot.find((l) => l.kind === kind && !l.taken);
     if (item) item.taken = true;
   }
-  game.message = name === 'getaway' ? 'JADE MANIFEST SECURED — run for the boat!' : '';
+  if (s.smoke) {
+    const p = tileCenter(s.smoke.tx, s.smoke.ty);
+    game.smokes.push({ x: p.x, y: p.y, r: 95, t: 6 });
+  }
+  if (s.coin) {
+    const p = tileCenter(s.coin.tx, s.coin.ty);
+    game.coins.push({ x: p.x, y: p.y, t: 1, landed: true });
+  }
+  if (s.getaway) {
+    // Stage the getaway chase itself: alarm surging, guards converging.
+    game.getaway = true;
+    for (const g of game.guards) {
+      g.state = 'alert';
+      g.suspicion = 100;
+      g.lastSeen = { x: game.player.x, y: game.player.y };
+    }
+  }
+  game.message = name === 'getaway' ? 'GETAWAY! The harbor is waking — RUN FOR THE BOAT!' : '';
   game.messageTime = name === 'getaway' ? 99 : 0;
   game.state = 'shot';
 }
@@ -408,16 +457,73 @@ function runSelfTest() {
       if (game.state === 'caught') caught = true;
     }
     check('standing in a cone gets you caught', caught, `alarm=${Math.floor(game.alarm)} state=${game.state}`);
-    // Tools.
+    // Tools: coin is free, smoke and EMP are paid for out of the take.
     loadLevel(0);
     game.state = 'playing';
     const coins0 = game.tools.coin;
     throwCoin(game);
     check('coin throw spends a coin', game.tools.coin === coins0 - 1);
+    check('smoke denied when broke', dropSmoke(game) === false && game.tools.smoke === 2);
+    check('EMP denied when broke', fireEmp(game) === false && game.tools.emp === 2);
+    const gold = game.loot.find((l) => l.kind === 'gold');
+    game.player.x = gold.x;
+    game.player.y = gold.y;
+    check('grab side loot to fund tools', tryPickup(game) && netLootValue(game) === 800);
     dropSmoke(game);
     check('smoke bomb creates a cloud', game.smokes.length === 1);
+    check('smoke costs $100 of the take', game.toolSpend === 100 && netLootValue(game) === 700);
     fireEmp(game);
     check('EMP disables cameras', game.cameras.every((c) => game.time < c.disabledUntil));
+    check('EMP costs $250 of the take', game.toolSpend === 350 && netLootValue(game) === 450);
+    // Vents: every vent tile is reachable, and the thief inside one is unseen.
+    for (let i = 0; i < LEVELS.length; i++) {
+      loadLevel(i);
+      const reach = reachableTiles(game.grid, LEVELS[i].player.tx, LEVELS[i].player.ty);
+      const vents = ventTiles(game);
+      check(`level ${i + 1} has a vent second route`, vents.length > 0, `${vents.length} vent tiles`);
+      for (const [tx, ty] of vents) {
+        check(`level ${i + 1} vent (${tx},${ty}) reachable`, reach.has(ty * 40 + tx));
+      }
+      // A thief standing in a vent cannot be seen by a guard next to it.
+      const [vx, vy] = vents[0];
+      const vp = tileCenter(vx, vy);
+      game.player.x = vp.x;
+      game.player.y = vp.y;
+      const gNear = game.guards[0];
+      gNear.x = vp.x + 40;
+      gNear.y = vp.y;
+      gNear.facing = Math.PI;
+      gNear.state = 'patrol';
+      check(`level ${i + 1} vent hides the thief`, guardSeesPlayer(gNear, game.player, game.grid, game.smokes) === 0);
+      // Second route: wall off the main doors / gaps and the jade must stay
+      // reachable — through the vents and nothing else.
+      const choke = LEVELS[i].secondRouteChoke;
+      if (choke) {
+        const choked = game.grid.map((row) => row.slice());
+        for (const [tx, ty] of choke) choked[ty][tx] = '#';
+        const reach2 = reachableTiles(choked, LEVELS[i].player.tx, LEVELS[i].player.ty);
+        check(
+          `level ${i + 1} jade reachable with main route walled off`,
+          reach2.has(LEVELS[i].jade.ty * 40 + LEVELS[i].jade.tx),
+          'second route proven',
+        );
+      }
+    }
+    // Getaway: grabbing the final manifest surges the alarm, wakes every
+    // guard, and the run to the boat still completes before the alarm peaks.
+    loadLevel(4);
+    game.state = 'playing';
+    const jade5 = game.loot.find((l) => l.kind === 'jade');
+    game.player.x = jade5.x;
+    game.player.y = jade5.y;
+    check('final jade starts the getaway', tryPickup(game) && game.getaway === true);
+    check('getaway surges the alarm', game.alarm >= 25, `alarm=${Math.floor(game.alarm)}`);
+    check('getaway wakes every guard', game.guards.every((g) => g.state === 'alert'));
+    const exit5 = tileCenter(game.level.exit.tx, game.level.exit.ty);
+    game.player.x = exit5.x;
+    game.player.y = exit5.y;
+    updatePlaying(1 / 60);
+    check('getaway run reaches the boat', game.state === 'levelclear');
     // All five levels load.
     for (let i = 0; i < LEVELS.length; i++) {
       loadLevel(i);

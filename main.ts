@@ -4,8 +4,10 @@
 // game/ and screenshots/ from beside this file to /output and writes /output/dossier.json, the
 // summary the judge reads, with the vendored make.fun library. A top-down 2D stealth heist in a
 // night dockside terminal: five levels, guard vision cones, security cameras, loot, tools and an
-// alarm meter, with a title screen, level briefs, a caught screen and a getaway ending. Put your
-// 3 or 4 PNG or JPEG screenshots in screenshots/ (the first by name is the cover) and run it.
+// alarm meter, with a title screen, level briefs, a caught screen and a getaway ending. Round 2
+// (Nov 2026) adds vent crawlspace second routes, tools paid for out of the take (smoke $100,
+// EMP $250), a getaway chase after the final manifest, and a night-shroud readability pass.
+// Put your 3 or 4 PNG or JPEG screenshots in screenshots/ (the first by name is the cover) and run it.
 // Screenshots here: 1-cover.jpg (container yard mid-heist), 2-warehouse.jpg, 3-freighter.jpg,
 // 4-getaway.jpg — staged with ?shot= in game/src/main.js, real renders of the game's own code.
 //

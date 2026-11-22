@@ -9,6 +9,7 @@ import {
   angleTo,
   angleDiff,
 } from './world.js';
+import { playerInVent } from './vents.js';
 
 export function createGuard(def, index) {
   const start = tileCenter(def.tx, def.ty);
@@ -51,6 +52,8 @@ export function guardStateColor(g) {
 // Does this guard currently see the thief? Returns 0..1 visibility strength.
 export function guardSeesPlayer(g, player, grid, smokes) {
   if (player.hidden) return 0;
+  // A thief crawling inside a vent duct cannot be seen, period.
+  if (playerInVent({ player, grid })) return 0;
   const view = inVisionCone(g.x, g.y, g.facing, GUARD.visionRange, GUARD.visionHalfAngle, player.x, player.y);
   if (!view.seen) return 0;
   if (!hasLineOfSight(grid, g.x, g.y, player.x, player.y, smokes)) return 0;

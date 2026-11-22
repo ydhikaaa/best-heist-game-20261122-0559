@@ -1,9 +1,10 @@
 // Midnight Harbor — loot, tools and the getaway exit.
 // One file, one job: what the thief steals, what the thief throws, and
 // how the thief leaves.
-import { TILE, TOOLS, SMOKE_RADIUS, SMOKE_TIME, EMP_TIME, COIN_THROW, COIN_NOISE, LOOT_VALUES } from './config.js';
+import { TILE, TOOLS, TOOL_COSTS, SMOKE_RADIUS, SMOKE_TIME, EMP_TIME, COIN_THROW, COIN_NOISE, LOOT_VALUES } from './config.js';
 import { tileCenter, angleTo } from './world.js';
 import { disableAllCameras } from './cameras.js';
+import { startGetaway } from './getaway.js';
 
 export function createLoot(def) {
   const items = [];
@@ -18,6 +19,24 @@ export function createLoot(def) {
 
 export function lootTakenValue(game) {
   return game.loot.filter((l) => l.taken).reduce((sum, l) => sum + l.value, 0);
+}
+
+// The take: loot grabbed minus what the tools cost. This is the number the
+// HUD shows and the final score counts — tools are paid for out of it.
+export function netLootValue(game) {
+  return Math.max(0, lootTakenValue(game) - (game.toolSpend || 0));
+}
+
+// Spend loot on a tool. Returns true when the thief could afford it.
+function payForTool(game, kind) {
+  const cost = TOOL_COSTS[kind];
+  if (netLootValue(game) < cost) {
+    game.message = `Need $${cost} loot for ${kind === 'smoke' ? 'smoke' : 'EMP'} — grab side loot first`;
+    game.messageTime = 2;
+    return false;
+  }
+  game.toolSpend = (game.toolSpend || 0) + cost;
+  return true;
 }
 
 export function hasJade(game) {
@@ -38,6 +57,8 @@ export function tryPickup(game) {
         game.audio.jadePickup();
         game.message = 'JADE MANIFEST SECURED — get to the exit!';
         game.messageTime = 3;
+        // The final manifest wakes the harbor: the getaway chase begins.
+        if (game.levelIndex === 4) startGetaway(game);
       } else {
         game.audio.pickup();
         game.message = `+ $${l.value.toLocaleString()} side loot`;
@@ -92,16 +113,18 @@ export function updateCoins(game, dt) {
 }
 
 // Drop a smoke bomb at the thief's feet: a cloud that blocks every cone.
+// Costs $100 of the take, on top of the charge.
 export function dropSmoke(game) {
   if (game.tools.smoke <= 0) {
     game.message = 'No smoke bombs left';
     game.messageTime = 1.5;
     return false;
   }
+  if (!payForTool(game, 'smoke')) return false;
   game.tools.smoke -= 1;
   game.smokes.push({ x: game.player.x, y: game.player.y, r: SMOKE_RADIUS, t: SMOKE_TIME });
   game.audio.smoke();
-  game.message = 'Smoke out — cones cannot see through it';
+  game.message = 'Smoke out — cones cannot see through it (−$100)';
   game.messageTime = 2;
   return true;
 }
@@ -112,16 +135,18 @@ export function updateSmokes(game, dt) {
 }
 
 // Fire the EMP: every camera goes dark for a while.
+// Costs $250 of the take, on top of the charge.
 export function fireEmp(game) {
   if (game.tools.emp <= 0) {
     game.message = 'No EMP charges left';
     game.messageTime = 1.5;
     return false;
   }
+  if (!payForTool(game, 'emp')) return false;
   game.tools.emp -= 1;
   disableAllCameras(game, EMP_TIME);
   game.audio.emp();
-  game.message = `EMP fired — cameras dark for ${EMP_TIME}s`;
+  game.message = `EMP fired — cameras dark for ${EMP_TIME}s (−$250)`;
   game.messageTime = 2;
   return true;
 }

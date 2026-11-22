@@ -88,11 +88,32 @@ export const ALARM = {
 };
 
 export const TOOLS = { coin: 3, smoke: 2, emp: 2 };
+// Tools cost loot, not just charges: smoke and EMP are paid for out of the
+// take, so grabbing side loot funds the tools that keep you unseen. A coin
+// is free — it is the thief's own small change.
+export const TOOL_COSTS = { coin: 0, smoke: 100, emp: 250 };
+export const TOOL_COST_LABELS = { coin: 'FREE', smoke: '$100', emp: '$250' };
 export const SMOKE_RADIUS = 95;
 export const SMOKE_TIME = 6;
 export const EMP_TIME = 8;
 export const COIN_THROW = 130;
 export const COIN_NOISE = 210;
+
+// Getaway: grabbing the final manifest wakes the whole harbor.
+export const GETAWAY = {
+  alarmSurge: 25, // alarm jumps by this much (capped)
+  alarmCap: 70, // the surge never pushes the alarm past this
+  alarmRise: 6, // per second while running for the boat
+};
+
+// Vent crawlspaces: a 'V' tile is a service duct the thief crawls through.
+// Walkable, but it blocks sight — guards and cameras cannot see through it,
+// and a thief inside one cannot be seen at all. The second route per level.
+export const VENT_COLORS = {
+  plate: '#1c2733',
+  edge: '#39d5bd',
+  slat: 'rgba(0, 0, 0, 0.5)',
+};
 
 export const LOOT_VALUES = { jade: 5000, gold: 800, cash: 400, art: 1200 };
 export const LOOT_NAMES = {
